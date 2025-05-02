@@ -1,0 +1,38 @@
+# === C++ & CMake ===
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+Makefile
+compile_commands.json
+*.o
+*.obj
+*.so
+*.a
+*.out
+*.exe
+
+# === CLion ===
+.idea/
+*.iml
+
+# === LLVM IR files (optional) ===
+*.ll
+*.bc
+
+# === ANTLR generated files ===
+*.tokens
+*.interp
+*.g4Lexer.cpp
+*.g4Lexer.h
+*.g4Parser.cpp
+*.g4Parser.h
+
+# === Logs & crash dumps ===
+*.log
+core.*
+*.dmp
+
+# === OS / Misc ===
+.DS_Store
+Thumbs.db

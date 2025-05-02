@@ -1,0 +1,7 @@
+MODULE Test;
+VAR x: REAL;
+BEGIN
+  x := 42.21;
+  RETURN x;
+END Test.
+
