@@ -36,3 +36,4 @@ core.*
 # === OS / Misc ===
 .DS_Store
 Thumbs.db
+antlr/
