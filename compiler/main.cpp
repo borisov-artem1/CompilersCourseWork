@@ -11,7 +11,7 @@
 int main()
 {
 
-    std::string path = "../compiler/oberonPrograms/2.txt";
+    std::string path = "../compiler/oberonPrograms/6.txt";
     std::ifstream file(path);
     if (!file.is_open())
     {
@@ -30,12 +30,24 @@ int main()
 
     llvm::LLVMContext llvmContext;
     llvm::IRBuilder<> builder(llvmContext);
-    auto* module = new llvm::Module("main", llvmContext);
-    oberonBaseVisitor visitor(llvmContext, builder, module);
+
+    // auto* module = new llvm::Module("main", llvmContext);
+    auto module = std::make_shared<llvm::Module>("main", llvmContext);
+    oberonBaseVisitor visitor(llvmContext, builder, module.get());
 
     visitor.visit(tree);
 
-    visitor.module->print(llvm::outs(), nullptr);
+
+    std::error_code ec;
+    llvm::raw_fd_ostream dest("output.ll", ec);
+    if (ec)
+    {
+        std::cerr << ec.value() << std::endl;
+        return 1;
+    }
+    visitor.module->print(dest, nullptr);
+    dest.close();
+    // visitor.module->print(llvm::outs(), nullptr);
 
 
 
