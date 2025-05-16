@@ -1,7 +1,7 @@
 MODULE Test;
-VAR x: REAL;
+VAR x: INTEGER;
 BEGIN
-  x := 42.21;
+  x := 42;
   RETURN x;
 END Test.
 

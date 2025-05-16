@@ -15,6 +15,7 @@ compile_commands.json
 # === CLion ===
 .idea/
 *.iml
+*.json
 
 # === LLVM IR files (optional) ===
 *.ll

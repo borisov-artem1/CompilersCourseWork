@@ -1,0 +1,16 @@
+MODULE ForTest;
+VAR
+  i, sum: INTEGER;
+  k: REAL;
+
+BEGIN
+  sum := 0;
+  k := 2.2;
+
+  FOR i := 1 TO 5 DO
+    sum := sum + i;
+    k := k * 2;
+  END;
+
+  RETURN k;
+END ForTest.

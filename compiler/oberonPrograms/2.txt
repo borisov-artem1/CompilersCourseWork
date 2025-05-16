@@ -1,8 +1,8 @@
 MODULE hello;
-VAR n, m, l:INTEGER;
+VAR n, m, l, k:INTEGER;
 
 BEGIN
-    l := 10;
+    l := -10;
     n := 1 + 1024;
     m := l + l + n;
 

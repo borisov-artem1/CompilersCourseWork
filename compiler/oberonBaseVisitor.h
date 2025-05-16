@@ -56,7 +56,7 @@ public:
   }
 
   virtual llvm::Value* visitReal(oberonParser::RealContext *ctx) override {
-    double value = std::stod(ctx->getText());
+    float value = std::stof(ctx->getText());
     llvm::Value* result = llvm::ConstantFP::get(builder.getFloatTy(), value);
 
     return result;
@@ -75,7 +75,21 @@ public:
   }
 
   virtual std::any visitConstDeclaration(oberonParser::ConstDeclarationContext *ctx) override {
-    return visitChildren(ctx);
+    std::string ident = visitIdentdef(ctx->identdef());
+    llvm::Constant* constValue = llvm::dyn_cast<llvm::Constant>(visitConstExpression(ctx->constExpression()));
+
+    auto globalVariable = std::make_unique<llvm::GlobalVariable>
+    (*module,
+      constValue->getType(),
+      true,
+      llvm::GlobalValue::PrivateLinkage,
+      constValue,
+      ident
+    );
+
+    namedValues[ident] = globalVariable.get();
+    namedTypes[ident] = constValue->getType();
+    return nullptr;
   }
 
   virtual llvm::Value* visitConstExpression(oberonParser::ConstExpressionContext *ctx) override {
@@ -192,13 +206,17 @@ public:
     auto resultAny = visit(ctx->term(0));
     //std::cout << resultAny.type().name() << std::endl;
     llvm::Value* result = std::any_cast<llvm::Value*>(resultAny);
+    llvm::Type* resultType = result->getType();
 
     if (ctx->addOperator().size() < ctx->term().size())
     {
       std::string prefixOp = ctx->getStart()->getText();
       if (prefixOp == "-")
       {
-        result = builder.CreateNeg(result, "negtmp");
+        if (resultType->isFloatingPointTy())
+          result = builder.CreateFNeg(result, "negtmp");
+        else
+          result = builder.CreateNeg(result, "negtmp");
       }
     }
 
@@ -206,18 +224,38 @@ public:
     {
       auto rhsAny = visit(ctx->term(i));
       llvm::Value* rhs = std::any_cast<llvm::Value*>(rhsAny);
+      llvm::Type* rhsType = rhs->getType();
+
+      if (resultType->isFloatingPointTy() && rhsType->isIntegerTy()) {
+        rhs = builder.CreateSIToFP(rhs, resultType);
+        rhsType = resultType;
+      } else if (resultType->isIntegerTy() && rhsType->isFloatingPointTy()) {
+        result = builder.CreateSIToFP(result, rhsType);
+        resultType = rhsType;
+      }
+
       std::string op = ctx->addOperator(i - 1)->getText();
 
       if (op == "+")
       {
-        result = builder.CreateAdd(result, rhs, "addtmp");
+
+        if (resultType->isFloatingPointTy())
+          result = builder.CreateFAdd(result, rhs, "addtmp");
+        else
+          result = builder.CreateAdd(result, rhs, "addtmp");
+        // result = builder.CreateAdd(result, rhs, "addtmp");
       } else if (op == "-")
       {
-        result = builder.CreateSub(result, rhs, "subtmp");
+        if (resultType->isFloatingPointTy())
+          result = builder.CreateFSub(result, rhs, "subtmp");
+        else
+          result = builder.CreateSub(result, rhs, "subtmp");
+        // result = builder.CreateSub(result, rhs, "subtmp");
       } else
       {
         return nullptr;
       }
+      resultType = result->getType();
     }
     return result;
   }
@@ -227,27 +265,43 @@ public:
   }
 
   virtual std::any visitTerm(oberonParser::TermContext *ctx) override {
-    auto resultAny = visitFactor(ctx->factor(0));
-    llvm::Value* result = std::any_cast<llvm::Value*>(resultAny);
+    llvm::Value* result = visitFactor(ctx->factor(0));
+    llvm::Type* resultType = result->getType();
 
     for (size_t i = 0; i < ctx->mulOperator().size(); ++i)
     {
       std::string op = visitMulOperator(ctx->mulOperator(i));
-      auto rhsAny = visitFactor(ctx->factor(i + 1));
-      llvm::Value* rhs = std::any_cast<llvm::Value*>(rhsAny);
+      llvm::Value* rhs = visitFactor(ctx->factor(i + 1));
+      llvm::Type* rhsType = rhs->getType();
+
+      if (resultType->isFloatingPointTy() && rhsType->isIntegerTy()) {
+        rhs = builder.CreateSIToFP(rhs, resultType);
+        rhsType = resultType;
+      } else if (resultType->isIntegerTy() && rhsType->isFloatingPointTy()) {
+        result = builder.CreateSIToFP(result, rhsType);
+        resultType = rhsType;
+      }
 
       if (op == "*")
       {
-        if (result->getType()->isFloatTy() || rhs->getType()->isFloatTy())
-        {
+        if (resultType->isFloatingPointTy())
           result = builder.CreateFMul(result, rhs, "fmultmp");
-        } else
-        {
+        else
           result = builder.CreateMul(result, rhs, "multmp");
-        }
+        // if (result->getType()->isFloatTy() || rhs->getType()->isFloatTy())
+        // {
+        //   result = builder.CreateFMul(result, rhs, "fmultmp");
+        // } else
+        // {
+        //   result = builder.CreateMul(result, rhs, "multmp");
+        // }
       } else if (op == "/")
       {
-        result = builder.CreateFDiv(result, rhs, "fdivtmp");
+        if (resultType->isFloatingPointTy())
+          result = builder.CreateFDiv(result, rhs, "fdivtmp");
+        else
+          result = builder.CreateSDiv(result, rhs, "divtmp");
+        // result = builder.CreateFDiv(result, rhs, "fdivtmp");
       }
       else if (op == "DIV")
       {
@@ -475,8 +529,9 @@ public:
 
     if (!namedValues[varName])
     {
-      auto* alloca = builder.CreateAlloca(builder.getInt32Ty(), nullptr, varName);
+      auto* alloca = builder.CreateAlloca(design->getType(), nullptr, varName);
       namedValues[varName] = alloca;
+      namedTypes[varName] = alloca->getType();
     }
 
     builder.CreateStore(expr, design);
@@ -565,7 +620,47 @@ public:
   }
 
   virtual std::any visitForStatement(oberonParser::ForStatementContext *ctx) override {
-    return visitChildren(ctx);
+    llvm::Function* func = builder.GetInsertBlock()->getParent();
+
+    std::string varName = ctx->ident()->getText();
+    llvm::Value* startValue = visitExpression(ctx->expression(0));
+    llvm::Value* endValue = visitExpression(ctx->expression(1));
+
+    llvm::Value* stepValue = nullptr;
+
+    if (ctx->constExpression() != nullptr)
+    {
+      stepValue = visitConstExpression(ctx->constExpression());
+    } else
+    {
+      stepValue = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 1);
+    }
+
+    llvm::AllocaInst* allVar = builder.CreateAlloca(llvm::Type::getInt32Ty(context), nullptr, varName);
+    builder.CreateStore(startValue, allVar);
+
+    namedValues[varName] = allVar;
+
+    llvm::BasicBlock* loopCond = llvm::BasicBlock::Create(context, "loop.cond", func);
+    llvm::BasicBlock* loopBody = llvm::BasicBlock::Create(context, "loop.body", func);
+    llvm::BasicBlock* loopEnd = llvm::BasicBlock::Create(context, "loop.end", func);
+
+    builder.CreateBr(loopCond);
+
+    builder.SetInsertPoint(loopCond);
+    llvm::Value* currValue = builder.CreateLoad(llvm::Type::getInt32Ty(context), allVar, varName + ".load");
+    llvm::Value* cmp = builder.CreateICmpSLE(currValue, endValue, "loopcond");
+    builder.CreateCondBr(cmp, loopBody, loopEnd);
+
+    builder.SetInsertPoint(loopBody);
+    visitStatementSequence(ctx->statementSequence());
+    llvm::Value* nextValue = builder.CreateAdd(currValue, stepValue, "nextval");
+    builder.CreateStore(nextValue, allVar);
+    builder.CreateBr(loopCond);
+
+    builder.SetInsertPoint(loopEnd);
+
+    return nullptr;
   }
 
   virtual std::any visitDeclarationSequence(oberonParser::DeclarationSequenceContext *ctx) override {
@@ -590,55 +685,61 @@ public:
   virtual std::any visitModule(oberonParser::ModuleContext *ctx) override {
     std::string moduleName = visitIdent(ctx->ident(0));
     module = new llvm::Module(moduleName, context);
-    auto* funcType = llvm::FunctionType::get(builder.getInt32Ty(), false);
-    auto* mainFunc = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "main", module);
-    auto* entry = llvm::BasicBlock::Create(context, "entry", mainFunc);
-    builder.SetInsertPoint(entry);
-    //visitChildren(ctx);
+
+
+    auto* dummyFuncType = llvm::FunctionType::get(builder.getVoidTy(), false);
+    auto* dummyFunc = llvm::Function::Create(dummyFuncType, llvm::Function::PrivateLinkage, "dummy", module);
+    auto* dummyEntry = llvm::BasicBlock::Create(context, "dummy_entry", dummyFunc);
+    builder.SetInsertPoint(dummyEntry);
 
     visitDeclarationSequence(ctx->declarationSequence());
     visitStatementSequence(ctx->statementSequence());
 
     llvm::Value* returnValue = visitFactor(ctx->factor());
-    // std::string varName = valueAny
-    // llvm::Value* retPtr = nullptr;
-    //
-    // try
-    // {
-    //   retPtr = std::any_cast<llvm::Value*>(valueAny);
-    // } catch (const std::bad_any_cast& e)
-    // {
-    //   std::cerr << "Error: bad_any_cast in visitModule at RETURN" << std::endl;
-    //   return nullptr;
-    // }
+    llvm::Type* returnType = returnValue->getType();
 
-    // llvm::Type* t = namedTypes[retPtr]; // TODO: must fixed bug with cast
-    // llvm::Value* retVal = builder.CreateLoad(t, retPtr);
 
-    // if (retVal->getType()->isFloatTy()) {
-    //   retVal = builder.CreateFPToSI(retVal, builder.getInt32Ty());
-    // }
+    dummyFunc->eraseFromParent();
+
+
+    auto* funcType = llvm::FunctionType::get(returnType, false);
+    auto* mainFunc = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, "main", module);
+    auto* entry = llvm::BasicBlock::Create(context, "entry", mainFunc);
+    builder.SetInsertPoint(entry);
+
+    visitDeclarationSequence(ctx->declarationSequence());
+    visitStatementSequence(ctx->statementSequence());
+
+    returnValue = visitFactor(ctx->factor());
+
 
     llvm::FunctionCallee printfFunc = module->getOrInsertFunction(
-    "printf",
-    llvm::FunctionType::get(
-        llvm::IntegerType::getInt32Ty(context),
-        llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(context)),
-        true
+        "printf",
+        llvm::FunctionType::get(
+            llvm::IntegerType::getInt32Ty(context),
+            llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(context)),
+            true
         )
     );
 
-    llvm::Value* formatStr = builder.CreateGlobalStringPtr("%d\n");
-    builder.CreateCall(printfFunc, {formatStr, returnValue});
+    if (returnType->isFloatTy()) {
+        llvm::Value* formatStr = builder.CreateGlobalStringPtr("%f\n");
+        llvm::Value* promoted = builder.CreateFPExt(returnValue, llvm::Type::getDoubleTy(context));
+        builder.CreateCall(printfFunc, {formatStr, promoted});
+    } else {
+        llvm::Value* formatStr = builder.CreateGlobalStringPtr("%d\n");
+        builder.CreateCall(printfFunc, {formatStr, returnValue});
+    }
 
     builder.CreateRet(returnValue);
 
+
     std::string endName = visitIdent(ctx->ident(1));
-    if (moduleName != endName)
-    {
-      std::cerr << "Module name mismatch: " << moduleName << " vs " << endName << std::endl;
-      throw std::runtime_error("Module name mismatch");
+    if (moduleName != endName) {
+        std::cerr << "Module name mismatch: " << moduleName << " vs " << endName << std::endl;
+        throw std::runtime_error("Module name mismatch");
     }
+
     return module;
   }
 

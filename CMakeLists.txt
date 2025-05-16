@@ -9,6 +9,9 @@ set(LLVM_DIR "/usr/lib/llvm-18/lib/cmake/llvm")
 
 find_package( LLVM CONFIG REQUIRED )
 
+find_package(GTest REQUIRED)
+include_directories(${GTEST_INCLUDE_DIRS})
+
 add_executable(${PROJECT_NAME}
         #  main.cpp
         compiler/oberonBaseListener.cpp
@@ -24,6 +27,8 @@ add_executable(${PROJECT_NAME}
         compiler/oberonVisitor.cpp
         compiler/oberonBaseVisitor.cpp
         compiler/oberonVisitor.h
+        compiler/rw_files.cpp
+        compiler/Gtests.cpp
 )
 
 target_include_directories( ${PROJECT_NAME} PRIVATE antlr/antlr4/runtime/Cpp/runtime/src )
@@ -40,6 +45,8 @@ target_include_directories( ${PROJECT_NAME} SYSTEM PUBLIC ${LLVM_INCLUDE_DIRS} )
 target_link_libraries( ${PROJECT_NAME}
         PUBLIC
         ${llvm_libs}
+        ${GTEST_LIBRARIES}
+        pthread
         #antlr4_shared
         antlr4_static
 )
